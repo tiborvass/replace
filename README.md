@@ -1,3 +1,7 @@
+# Fork
+
+Forked from github.com/icholy/replace, hopefully temporarily.
+
 # Streaming text replacement
 
 [![GoDoc](https://godoc.org/github.com/icholy/replace?status.svg)](https://godoc.org/github.com/icholy/replace)
