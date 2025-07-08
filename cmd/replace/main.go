@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 
-	"github.com/icholy/replace"
+	"github.com/tiborvass/replace"
 	"golang.org/x/text/transform"
 )
 
