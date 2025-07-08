@@ -19,37 +19,60 @@ func Chain(r io.Reader, tt ...transform.Transformer) io.Reader {
 // Transformer replaces text in a stream
 // See: http://golang.org/x/text/transform
 type Transformer struct {
-	transform.NopResetter
+	old, new     []byte
+	oldlen       int
+	numReplaced  int
+	numToReplace int
+}
 
-	old, new []byte
-	oldlen   int
+func (t *Transformer) Reset() {
+	t.numReplaced = 0
 }
 
 var _ transform.Transformer = (*Transformer)(nil)
 
 // Bytes returns a transformer that replaces all instances of old with new.
 // Unlike bytes.Replace, empty old values don't match anything.
-func Bytes(old, new []byte) Transformer {
-	return Transformer{old: old, new: new, oldlen: len(old)}
+func Bytes(old, new []byte) *Transformer {
+	return BytesN(old, new, -1)
+}
+
+// BytesN returns a transformer that replaces n instances of old with new.
+// Unlike bytes.Replace, empty old values don't match anything.
+// With negative n, BytesN is equivalent to Bytes, replacing all instances.
+func BytesN(old, new []byte, n int) *Transformer {
+	return &Transformer{old: old, new: new, oldlen: len(old), numToReplace: n}
 }
 
 // String returns a transformer that replaces all instances of old with new.
 // Unlike strings.Replace, empty old values don't match anything.
-func String(old, new string) Transformer {
-	return Bytes([]byte(old), []byte(new))
+func String(old, new string) *Transformer {
+	return BytesN([]byte(old), []byte(new), -1)
+}
+
+// StringN returns a transformer that replaces n instances of old with new.
+// Unlike strings.Replace, empty old values don't match anything.
+// With negative n, StringN is equivalent to String, replacing all instances.
+func StringN(old, new string, n int) *Transformer {
+	return BytesN([]byte(old), []byte(new), n)
 }
 
 // Transform implements golang.org/x/text/transform#Transformer
-func (t Transformer) Transform(dst, src []byte, atEOF bool) (nDst, nSrc int, err error) {
+func (t *Transformer) Transform(dst, src []byte, atEOF bool) (nDst, nSrc int, err error) {
 	var n int
-	// don't do anything for empty old string. We're forced to do this because an optimization in
-	// transform.String prevents us from generating any output when the src is empty.
-	// see: https://github.com/golang/text/blob/master/transform/transform.go#L570-L576
-	if t.oldlen == 0 {
-		n, err = fullcopy(dst, src)
-		return n, n, err
+	// Fast path for empty string
+	// See https://github.com/golang/text/blob/80721808805f9d846d907c85d73ca6b5b6ecb870/transform/transform.go#L570-L576
+	if dst == nil && src == nil {
+		return
 	}
-	// replace all instances of old with new
+	// Do not replace if we reached the desired number of replacements
+	if t.oldlen == 0 || (t.numToReplace >= 0 && t.numReplaced >= t.numToReplace) {
+		n, err = fullcopy(dst, src)
+		nSrc += n
+		nDst += n
+		return
+	}
+	// replace t.numToReplace instances of old with new
 	for {
 		i := bytes.Index(src[nSrc:], t.old)
 		if i == -1 {
@@ -69,6 +92,10 @@ func (t Transformer) Transform(dst, src []byte, atEOF bool) (nDst, nSrc int, err
 		}
 		nDst += n
 		nSrc += t.oldlen
+		t.numReplaced++
+		if t.numToReplace >= 0 && t.numToReplace == t.numReplaced {
+			break
+		}
 	}
 	// if we're at the end, tack on any remaining bytes
 	if atEOF {
@@ -78,7 +105,7 @@ func (t Transformer) Transform(dst, src []byte, atEOF bool) (nDst, nSrc int, err
 		return
 	}
 	// skip everything except the trailing len(r.old) - 1
-	// we do this becasue there could be a match straddling
+	// we do this because there could be a match straddling
 	// the boundary
 	if skip := len(src[nSrc:]) - t.oldlen + 1; skip > 0 {
 		n, err = fullcopy(dst[nDst:], src[nSrc:nSrc+skip])
